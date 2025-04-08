@@ -17,6 +17,7 @@ class TrackingProvider extends ChangeNotifier {
   Timer? _summarySyncTimer;
 
   bool _tracking = false;
+
   bool get isTracking => _tracking;
 
   DateTime? _lastRecordedTime;
@@ -73,7 +74,7 @@ class TrackingProvider extends ChangeNotifier {
     _lastRecordedTime = DateTime.now();
     notifyListeners();
 
-    _location.changeSettings(interval: 10000, distanceFilter: 1);
+    _location.changeSettings(interval: 60000, distanceFilter: 20); // every 60 seconds or 20 meters
     _locationSubscription = _location.onLocationChanged.listen(_onLocationChanged);
     _startSyncTimer();
     return true;
@@ -101,8 +102,21 @@ class TrackingProvider extends ChangeNotifier {
       lastUpdated: DateTime.now(),
     );
 
-    _localStorage.updateLastSavedLocation(current);
+    if (_shouldSaveLocation(current)) {
+      _localStorage.updateLastSavedLocation(current);
+    }
     _processLocation(current);
+  }
+
+  bool _shouldSaveLocation(model.Location current) {
+    if (_lastLocation == null) return true;
+    final dist = geo.Geolocator.distanceBetween(
+      _lastLocation!.latitude!,
+      _lastLocation!.longitude!,
+      current.latitude!,
+      current.longitude!,
+    );
+    return dist >= 50; // Save only if moved more than 50 meters
   }
 
   void _processLocation(model.Location current) {
@@ -170,7 +184,7 @@ class TrackingProvider extends ChangeNotifier {
 
   void _startSyncTimer() {
     _summarySyncTimer?.cancel();
-    _summarySyncTimer = Timer.periodic(const Duration(minutes: 1), (_) => _saveDailySummary());
+    _summarySyncTimer = Timer.periodic(const Duration(minutes: 5), (_) => _saveDailySummary());
   }
 
   void _saveDailySummary() {

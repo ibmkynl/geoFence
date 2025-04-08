@@ -38,7 +38,6 @@ class LocalDataProvider with ChangeNotifier {
 
   void updateLastSavedLocation(Location location) {
     _localBox.put('lastUpdatedLocation', location.toJson());
-    notifyListeners();
   }
 
   List<GeoFenceLocation> get geoFences {
