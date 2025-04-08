@@ -75,7 +75,6 @@ class LocationProvider with ChangeNotifier {
 
       _locationData = await _location.getLocation().timeout(const Duration(seconds: 6));
       _current = await _resolveToLocation();
-      print(_current);
     } catch (e) {
       NotificationsHelper().showError('Location update failed: $e');
     }

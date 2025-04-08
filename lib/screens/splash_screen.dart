@@ -29,7 +29,6 @@ class SplashScreenState extends State<SplashScreen> with AfterLayoutMixin<Splash
   Future<void> _routeUser() async {
     try {
       await _initializeAppServices();
-      await Provider.of<SummaryProvider>(context, listen: false).fetchSummaries();
 
       _redirectToMainScreen();
     } catch (e, s) {
@@ -56,6 +55,7 @@ class SplashScreenState extends State<SplashScreen> with AfterLayoutMixin<Splash
   }
 
   void _redirectToMainScreen() {
+    Provider.of<SummaryProvider>(context, listen: false).fetchSummaries();
     Navigator.pushReplacement(context, Dashboard.route());
   }
 

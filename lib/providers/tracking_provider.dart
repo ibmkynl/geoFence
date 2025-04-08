@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:location/location.dart';
 
@@ -8,7 +8,7 @@ import '../models/location.dart' as model;
 import 'local_data_provider.dart';
 import 'location_provider.dart';
 
-class TrackingProvider extends ChangeNotifier {
+class TrackingProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Location _location = Location();
   final LocationProvider _locationProvider = LocationProvider();
   final LocalDataProvider _localStorage = LocalDataProvider();
@@ -55,6 +55,16 @@ class TrackingProvider extends ChangeNotifier {
   };
 
   Map<String, Duration> get locationDurations => _durations;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _saveDailySummary();
+    }
+  }
+
+  void startObserver() => WidgetsBinding.instance.addObserver(this);
+  void stopObserver() => WidgetsBinding.instance.removeObserver(this);
 
   Future<bool> clockIn() async {
     final permissionGranted = await _locationProvider.requestPermission();
