@@ -48,24 +48,19 @@ class LocationProvider with ChangeNotifier {
       return false;
     }
 
+    return await ensureServiceAndBackgroundMode();
+  }
+
+  Future<bool> ensureServiceAndBackgroundMode() async {
     final serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled && !await _location.requestService()) {
-      notifications.showError("Location services must be enabled.");
-      return false;
-    }
+    if (!serviceEnabled && !await _location.requestService()) return false;
 
     try {
-      final backgroundGranted = await _location.enableBackgroundMode(enable: true);
-      if (!backgroundGranted) {
-        notifications.showError("Background location permission denied.");
-        return false;
-      }
-    } catch (e) {
-      notifications.showError("Error enabling background mode: $e");
+      final backgroundEnabled = await _location.enableBackgroundMode(enable: true);
+      return backgroundEnabled;
+    } catch (_) {
       return false;
     }
-
-    return true;
   }
 
   Future<void> _updateCurrentLocation() async {

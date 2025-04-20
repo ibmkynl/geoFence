@@ -13,17 +13,21 @@ class TrackingProvider extends ChangeNotifier with WidgetsBindingObserver {
   final LocationProvider _locationProvider = LocationProvider();
   final LocalDataProvider _localStorage = LocalDataProvider();
 
-  StreamSubscription<LocationData>? _locationSubscription;
+  StreamSubscription<LocationData>? _locationStreamSubscription;
   Timer? _summarySyncTimer;
 
-  bool _tracking = false;
+  bool _isTracking = false;
 
-  bool get isTracking => _tracking;
+  bool get isTracking => _isTracking;
 
-  DateTime? _lastRecordedTime;
+  DateTime? _lastTimestamp;
 
-  final Map<String, Duration> _durations = {'Home': Duration.zero, 'Office': Duration.zero, 'Traveling': Duration.zero};
-  final Map<String, double> _distances = {};
+  final Map<String, Duration> _locationDurations = {
+    'Home': Duration.zero,
+    'Office': Duration.zero,
+    'Traveling': Duration.zero,
+  };
+  final Map<String, double> _locationDistances = {};
 
   model.Location? _lastLocation;
 
@@ -54,7 +58,7 @@ class TrackingProvider extends ChangeNotifier with WidgetsBindingObserver {
     ),
   };
 
-  Map<String, Duration> get locationDurations => _durations;
+  Map<String, Duration> get locationDurations => _locationDurations;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -63,42 +67,34 @@ class TrackingProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void startObserver() => WidgetsBinding.instance.addObserver(this);
-  void stopObserver() => WidgetsBinding.instance.removeObserver(this);
-
   Future<bool> clockIn() async {
     final permissionGranted = await _locationProvider.requestPermission();
     if (!permissionGranted) return false;
 
-    final serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled && !await _location.requestService()) return false;
+    final ready = await _locationProvider.ensureServiceAndBackgroundMode();
+    if (!ready) return false;
 
-    try {
-      final backgroundEnabled = await _location.enableBackgroundMode(enable: true);
-      if (!backgroundEnabled) return false;
-    } catch (_) {
-      return false;
-    }
-
-    _tracking = true;
-    _lastRecordedTime = DateTime.now();
+    _isTracking = true;
+    _lastTimestamp = DateTime.now();
     notifyListeners();
 
     _location.changeSettings(interval: 60000, distanceFilter: 20); // every 60 seconds or 20 meters
-    _locationSubscription = _location.onLocationChanged.listen(_onLocationChanged);
+    _locationStreamSubscription = _location.onLocationChanged.listen(_onLocationChanged);
     _startSyncTimer();
     return true;
   }
 
   void clockOut() {
-    _locationSubscription?.cancel();
+    _locationStreamSubscription?.cancel();
     _location.enableBackgroundMode(enable: false);
-    _tracking = false;
+    _isTracking = false;
     _summarySyncTimer?.cancel();
 
     final lastLoc = _localStorage.lastSavedLocation;
-    if (lastLoc != null) _processLocation(lastLoc);
-
+    if (lastLoc != null) {
+      _updateLastLocationIfMoved(lastLoc);
+      _accumulateLocationData(lastLoc);
+    }
     _saveDailySummary();
     notifyListeners();
   }
@@ -112,30 +108,31 @@ class TrackingProvider extends ChangeNotifier with WidgetsBindingObserver {
       lastUpdated: DateTime.now(),
     );
 
+    _updateLastLocationIfMoved(current);
+    _accumulateLocationData(current);
+  }
+
+  void _updateLastLocationIfMoved(model.Location current) {
     if (_shouldSaveLocation(current)) {
       _localStorage.updateLastSavedLocation(current);
     }
-    _processLocation(current);
   }
 
-  bool _shouldSaveLocation(model.Location current) {
-    if (_lastLocation == null) return true;
-    final dist = geo.Geolocator.distanceBetween(
-      _lastLocation!.latitude!,
-      _lastLocation!.longitude!,
-      current.latitude!,
-      current.longitude!,
-    );
-    return dist >= 50; // Save only if moved more than 50 meters
-  }
-
-  void _processLocation(model.Location current) {
-    if (_lastRecordedTime == null) return;
+  void _accumulateLocationData(model.Location current) {
+    if (_lastTimestamp == null) return;
 
     final now = DateTime.now();
-    final delta = now.difference(_lastRecordedTime!);
-    _lastRecordedTime = now;
+    final delta = now.difference(_lastTimestamp!);
+    _lastTimestamp = now;
 
+    _calculateZoneDurations(current, delta);
+    _calculateZoneDistances(current);
+
+    _lastLocation = current;
+    notifyListeners();
+  }
+
+  void _calculateZoneDurations(model.Location current, Duration delta) {
     final insideZones = <String>[];
 
     _defaultZones.forEach((label, zone) {
@@ -158,38 +155,40 @@ class TrackingProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
       if (distance <= 50) {
         insideZones.add(zone.name);
-        _durations.putIfAbsent(zone.name, () => Duration.zero);
+        _locationDurations.putIfAbsent(zone.name, () => Duration.zero);
       }
     }
 
     if (insideZones.isEmpty) {
-      _durations['Traveling'] = _durations['Traveling']! + delta;
-      if (_lastLocation != null) {
-        final traveled = geo.Geolocator.distanceBetween(
-          _lastLocation!.latitude!,
-          _lastLocation!.longitude!,
-          current.latitude!,
-          current.longitude!,
-        );
-        _distances['Traveling'] = (_distances['Traveling'] ?? 0.0) + traveled;
-      }
+      _locationDurations['Traveling'] = _locationDurations['Traveling']! + delta;
     } else {
       for (final zone in insideZones) {
-        _durations[zone] = _durations[zone]! + delta;
-        if (_lastLocation != null) {
-          final covered = geo.Geolocator.distanceBetween(
-            _lastLocation!.latitude!,
-            _lastLocation!.longitude!,
-            current.latitude!,
-            current.longitude!,
-          );
-          _distances[zone] = (_distances[zone] ?? 0.0) + covered;
-        }
+        _locationDurations[zone] = _locationDurations[zone]! + delta;
       }
     }
+  }
 
-    _lastLocation = current;
-    notifyListeners();
+  void _calculateZoneDistances(model.Location current) {
+    if (_lastLocation != null) {
+      final traveled = geo.Geolocator.distanceBetween(
+        _lastLocation!.latitude!,
+        _lastLocation!.longitude!,
+        current.latitude!,
+        current.longitude!,
+      );
+      _locationDistances['Traveling'] = (_locationDistances['Traveling'] ?? 0.0) + traveled;
+    }
+  }
+
+  bool _shouldSaveLocation(model.Location current) {
+    if (_lastLocation == null) return true;
+    final dist = geo.Geolocator.distanceBetween(
+      _lastLocation!.latitude!,
+      _lastLocation!.longitude!,
+      current.latitude!,
+      current.longitude!,
+    );
+    return dist >= 50; // Save only if moved more than 50 meters
   }
 
   void _startSyncTimer() {
@@ -198,6 +197,6 @@ class TrackingProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _saveDailySummary() {
-    _localStorage.saveOrUpdateSummary(_durations, _distances);
+    _localStorage.saveOrUpdateSummary(_locationDurations, _locationDistances);
   }
 }
